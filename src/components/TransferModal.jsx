@@ -1,9 +1,15 @@
 import { motion } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 
-function TransferModal({ fileName, progress, speed, isReceiving = false, isDecrypting = false, isDownloading = false }) {
+function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isReceiving = false, isDecrypting = false, isDownloading = false }) {
   const progressValue = typeof progress === 'number' ? Math.max(0, Math.min(100, progress)) : 0
   const displaySpeed = speed && speed !== '0 B/s' ? speed : null
+  
+  const formatBytes = (bytes) => {
+    if (!bytes || bytes < 0) return '0 MB'
+    const mb = bytes / (1024 * 1024)
+    return mb.toFixed(2) + ' MB'
+  }
   
   return (
     <motion.div
@@ -62,13 +68,13 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
             {fileName}
           </p>
 
-          <div className="w-full h-2.5 bg-ios-lightGray/50 dark:bg-black/40 rounded-full overflow-hidden shadow-inner relative">
+          <div className="w-full h-3 bg-ios-lightGray/70 dark:bg-black/60 rounded-full overflow-hidden shadow-inner relative border border-gray-300/30 dark:border-white/10">
             <motion.div
               key={progressValue}
               initial={{ width: 0 }}
               animate={{ width: `${progressValue}%` }}
               className={`h-full rounded-full shadow-lg ${
-                isReceiving ? 'bg-green-500' : 'bg-muted-blue'
+                isReceiving ? 'bg-gradient-to-r from-green-400 to-green-600' : 'bg-gradient-to-r from-blue-400 to-muted-blue'
               }`}
               transition={{ type: 'spring', stiffness: 200, damping: 20, duration: 0.3 }}
             />
@@ -76,17 +82,39 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
               <motion.div
                 animate={{ x: ['-100%', '100%'] }}
                 transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                className="absolute top-0 left-0 w-1/3 h-full bg-white/30 rounded-full"
+                className="absolute top-0 left-0 w-1/3 h-full bg-white/40 rounded-full"
               />
             )}
           </div>
           
-          <div className="flex items-center justify-between mt-2">
-            <p className="text-sm font-medium text-muted-blue">
-              {Math.round(progressValue)}%
-            </p>
-            {(progressValue < 100 || isDecrypting || isDownloading) && (
-              <p className="text-xs text-ios-gray dark:text-gray-400 font-medium">
+          <div className="mt-3 space-y-1">
+            <div className="flex items-center justify-between">
+              <p className="text-base font-semibold text-muted-blue">
+                {Math.round(progressValue)}%
+              </p>
+              {bytesSent > 0 && totalBytes > 0 && (
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {formatBytes(bytesSent)} / {formatBytes(totalBytes)}
+                </p>
+              )}
+            </div>
+            {displaySpeed && progressValue > 0 && (
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Speed: {displaySpeed}
+                </p>
+                {(progressValue < 100 || isDecrypting || isDownloading) && (
+                  <p className="text-xs text-ios-gray dark:text-gray-400 font-medium">
+                    {isReceiving
+                      ? (isDecrypting ? 'Decrypting...' : isDownloading ? 'Preparing...' : 'Receiving...')
+                      : (progressValue === 0 ? 'Waiting...' : 'Sending...')
+                    }
+                  </p>
+                )}
+              </div>
+            )}
+            {(!displaySpeed || progressValue === 0) && (progressValue < 100 || isDecrypting || isDownloading) && (
+              <p className="text-xs text-ios-gray dark:text-gray-400 font-medium text-center">
                 {isReceiving
                   ? (isDecrypting ? 'Decrypting file...' : isDownloading ? 'Preparing download...' : progressValue === 0 ? 'Preparing...' : 'Receiving from nearby device...')
                   : (progressValue === 0 ? 'Waiting for recipient...' : (progressValue > 0 ? 'Sending to nearby device...' : 'Preparing...'))
@@ -94,11 +122,6 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
               </p>
             )}
           </div>
-          {displaySpeed && progressValue > 0 && (
-            <p className="text-xs text-ios-gray dark:text-gray-400 mt-1">
-              Speed: {displaySpeed}
-            </p>
-          )}
         </div>
       </motion.div>
     </motion.div>

@@ -197,6 +197,8 @@ function App() {
               fileName={transferProgress.fileName}
               progress={transferProgress.progress}
               speed={transferProgress.speed}
+              bytesSent={transferProgress.bytesSent}
+              totalBytes={transferProgress.totalBytes}
             />
           )}
         </AnimatePresence>
@@ -207,6 +209,8 @@ function App() {
               fileName={receivingProgress.fileName}
               progress={receivingProgress.progress}
               speed={receivingProgress.speed}
+              bytesSent={receivingProgress.bytesReceived}
+              totalBytes={receivingProgress.totalBytes}
               isReceiving={true}
               isDecrypting={receivingProgress.isDecrypting}
               isDownloading={receivingProgress.isDownloading}

@@ -933,7 +933,8 @@ export function usePeerConnection() {
                 progress: progress,
                 speed: speedFormatted,
                 startTime: receivingProgress.startTime,
-                bytesReceived: bytesReceived
+                bytesReceived: bytesReceived,
+                totalBytes: receivingProgress.totalBytes || metadata.fileSize
               })
             }
 
@@ -1074,7 +1075,8 @@ export function usePeerConnection() {
           progress: 0,
           speed: null,
           startTime: Date.now(),
-          bytesReceived: 0
+          bytesReceived: 0,
+          totalBytes: fileSize
         })
       } else if (data.type === 'file-chunk') {
         console.log('[usePeerConnection] Received file-chunk, chunkIndex:', data.chunkIndex, 'from peer:', conn.peer, 'chunkData type:', typeof data.chunk, 'isArray:', Array.isArray(data.chunk))
@@ -1173,7 +1175,8 @@ export function usePeerConnection() {
               progress: progress,
               speed: speedFormatted,
               startTime: receivingProgress.startTime,
-              bytesReceived: bytesReceived
+              bytesReceived: bytesReceived,
+              totalBytes: receivingProgress.totalBytes || metadata.fileSize
             })
           }
 
@@ -1467,7 +1470,9 @@ export function usePeerConnection() {
       setIsTransferring(true)
       setTransferProgress({
         fileName: file.name,
-        progress: 0
+        progress: 0,
+        bytesSent: 0,
+        totalBytes: file.size
       })
 
       conn.send(encodeMessage({
@@ -1671,7 +1676,9 @@ export function usePeerConnection() {
         setTransferProgress({
           fileName: file.name,
           progress: progress,
-          speed: speedFormatted
+          speed: speedFormatted,
+          bytesSent: bytesSent,
+          totalBytes: fileSize
         })
         lastProgressUpdate = now
       }
@@ -1740,7 +1747,9 @@ export function usePeerConnection() {
       setTransferProgress({
         fileName: file.name,
         progress: 100,
-        speed: formatSpeed(avgSpeed)
+        speed: formatSpeed(avgSpeed),
+        bytesSent: bytesSent,
+        totalBytes: fileSize
       })
 
       setTimeout(() => {
@@ -1774,7 +1783,9 @@ export function usePeerConnection() {
       setIsTransferring(true)
       setTransferProgress({
         fileName: file.name,
-        progress: 0
+        progress: 0,
+        bytesSent: 0,
+        totalBytes: file.size
       })
 
 
@@ -1897,7 +1908,9 @@ export function usePeerConnection() {
         setTransferProgress({
           fileName: file.name,
           progress: progress,
-          speed: speedFormatted
+          speed: speedFormatted,
+          bytesSent: bytesSent,
+          totalBytes: fileSize
         })
         lastProgressUpdate = now
       }
@@ -1954,7 +1967,9 @@ export function usePeerConnection() {
       setTransferProgress({
         fileName: file.name,
         progress: 100,
-        speed: formatSpeed(avgSpeed)
+        speed: formatSpeed(avgSpeed),
+        bytesSent: bytesSent,
+        totalBytes: fileSize
       })
 
       setTimeout(() => {
