@@ -439,7 +439,7 @@ export function usePeerConnection() {
                   
                   console.log('[usePeerConnection] File assembled successfully, downloading:', metadata.fileName)
                   
-                  const senderDevice = devices.find(d => d.id === message.senderPeerId)
+                  const senderDevice = devices.find(d => d.id === senderPeerId)
                   addToHistory({
                     type: 'received',
                     fileName: metadata.fileName,
@@ -1221,9 +1221,10 @@ export function usePeerConnection() {
       const { key, keyData } = await generateEncryptionKey()
       const baseIV = crypto.getRandomValues(new Uint8Array(12))
 
-      if (conn.dataChannel) {
-        conn.dataChannel.binaryType = 'arraybuffer'
-        conn.dataChannel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
+      const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
+      if (dc) {
+        dc.binaryType = 'arraybuffer'
+        dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
       }
 
       const formatSpeed = (bytesPerSecond) => {
@@ -1268,7 +1269,7 @@ export function usePeerConnection() {
           throw new Error('Connection closed')
         }
 
-        const dc = conn.dataChannel
+        const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
         if (dc) {
           while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
             await waitForLowBuffer(dc)
@@ -1313,6 +1314,7 @@ export function usePeerConnection() {
           lastProgressUpdate = now
         }
 
+        const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
         if (dc) {
           await waitForLowBuffer(dc)
         }
