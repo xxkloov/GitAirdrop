@@ -23,8 +23,18 @@ function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isRec
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.9, opacity: 0, y: 20 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="liquid-glass dark:liquid-glass-dark liquid-glass-refraction liquid-glass-specular ios-rounded-xl p-8 max-w-md w-full shadow-ios dark:shadow-ios-dark border-glass overflow-hidden"
+        className="liquid-glass dark:liquid-glass-dark liquid-glass-refraction liquid-glass-specular ios-rounded-xl p-8 max-w-md w-full shadow-ios dark:shadow-ios-dark border-glass overflow-hidden relative"
       >
+        {!isReceiving && displaySpeed && bytesSent > 0 && (
+          <div className="absolute bottom-4 right-4 text-right">
+            <p className="text-xs text-ios-gray dark:text-gray-400 font-medium mb-1">
+              {formatBytes(bytesSent)}
+            </p>
+            <p className="text-sm font-semibold text-muted-blue">
+              {displaySpeed}
+            </p>
+          </div>
+        )}
         <div className="text-center">
           <motion.div
             className="inline-block mb-4 relative"
@@ -56,13 +66,6 @@ function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isRec
               }`}
               transition={{ type: 'spring', stiffness: 200, damping: 20, duration: 0.3 }}
             />
-            {progressValue > 0 && progressValue < 100 && (
-              <motion.div
-                animate={{ x: ['-100%', '100%'] }}
-                transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                className="absolute top-0 left-0 w-1/3 h-full bg-white/40 rounded-full"
-              />
-            )}
           </div>
           
           <div className="mt-3 space-y-1">
