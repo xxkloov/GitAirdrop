@@ -840,22 +840,171 @@ export function usePeerConnection() {
       const dataSize = rawData instanceof ArrayBuffer ? rawData.byteLength : rawData instanceof Blob ? rawData.size : rawData instanceof Uint8Array ? rawData.length : typeof rawData === 'string' ? rawData.length : 'unknown'
       console.log('[usePeerConnection] Received raw data, type:', typeof rawData, 'constructor:', rawData?.constructor?.name, 'size:', dataSize, 'from peer:', conn.peer)
       
-      if (rawData instanceof ArrayBuffer || rawData instanceof Blob) {
-        const text = rawData instanceof Blob 
-          ? await rawData.text() 
-          : new TextDecoder().decode(rawData)
+      let arrayBuffer
+      if (rawData instanceof ArrayBuffer) {
+        arrayBuffer = rawData
+      } else if (rawData instanceof Blob) {
+        arrayBuffer = await rawData.arrayBuffer()
+      } else if (rawData instanceof Uint8Array) {
+        arrayBuffer = rawData.buffer
+      } else {
+        arrayBuffer = null
+      }
+      
+      if (arrayBuffer && arrayBuffer.byteLength >= 5) {
+        const view = new DataView(arrayBuffer)
+        const messageType = view.getUint8(0)
+        
+        if (messageType === 1) {
+          const chunkIndex = view.getUint32(1, true)
+          const encryptedChunk = new Uint8Array(arrayBuffer.slice(5))
+          
+          const transferKey = Object.keys(transferStateRef.current).find(key => 
+            key.startsWith(conn.peer + '_') && transferStateRef.current[key] === 'transferring'
+          )
+          
+          if (!transferKey) {
+            console.error('[usePeerConnection] Received binary chunk but no active transfer for peer:', conn.peer)
+            return
+          }
+          
+          const metadata = fileMetadataRef.current[transferKey]
+          if (!metadata) {
+            console.error('[usePeerConnection] Received binary chunk but no metadata exists')
+            return
+          }
+          
+          if (!fileChunksRef.current[transferKey]) {
+            fileChunksRef.current[transferKey] = new Array(metadata.totalChunks)
+          }
+          
+          try {
+            const decryptedChunk = await new Promise((resolve, reject) => {
+              const handler = (e) => {
+                if (e.data.type === 'chunk-decrypted' && e.data.chunkIndex === chunkIndex) {
+                  metadata.cryptoWorker.removeEventListener('message', handler)
+                  resolve(new Uint8Array(e.data.decrypted))
+                } else if (e.data.type === 'error') {
+                  metadata.cryptoWorker.removeEventListener('message', handler)
+                  reject(new Error(e.data.error))
+                }
+              }
+              metadata.cryptoWorker.addEventListener('message', handler)
+              metadata.cryptoWorker.postMessage({
+                type: 'decrypt-chunk',
+                data: {
+                  encryptedChunk: Array.from(encryptedChunk),
+                  baseIV: Array.from(metadata.baseIV),
+                  chunkIndex: chunkIndex
+                }
+              }, [encryptedChunk.buffer])
+            })
+            
+            fileChunksRef.current[transferKey][chunkIndex] = decryptedChunk
+            console.log('[usePeerConnection] Decrypted and stored binary chunk', chunkIndex, 'size:', decryptedChunk.length, 'bytes')
+
+            const chunks = fileChunksRef.current[transferKey]
+            const receivedChunks = chunks.filter(c => c !== undefined).length
+            const progress = Math.round((receivedChunks / metadata.totalChunks) * 100)
+            
+            if (receivedChunks % 50 === 0 || receivedChunks === metadata.totalChunks) {
+              console.log('[usePeerConnection] Receiving:', metadata.fileName, '-', progress + '%', `(${receivedChunks}/${metadata.totalChunks})`)
+            }
+            
+            const formatSpeed = (bytesPerSecond) => {
+              if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s'
+              if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s'
+              return (bytesPerSecond / (1024 * 1024)).toFixed(2) + ' MB/s'
+            }
+            
+            if (receivingProgress) {
+              const bytesReceived = chunks.filter(c => c !== undefined).reduce((sum, chunk) => sum + (chunk ? chunk.length : 0), 0)
+              const elapsed = (Date.now() - receivingProgress.startTime) / 1000
+              const speed = elapsed > 0 ? bytesReceived / elapsed : 0
+              const speedFormatted = formatSpeed(speed)
+              
+              setReceivingProgress({
+                fileName: metadata.fileName,
+                progress: progress,
+                speed: speedFormatted,
+                startTime: receivingProgress.startTime,
+                bytesReceived: bytesReceived
+              })
+            }
+
+            if (receivedChunks === metadata.totalChunks && chunks.every(c => c !== undefined)) {
+              console.log('[usePeerConnection] All chunks received and decrypted, assembling file:', metadata.fileName)
+              
+              setReceivingProgress(prev => prev ? {
+                ...prev,
+                progress: 100,
+                isDownloading: true
+              } : null)
+              
+              try {
+                const blob = new Blob(chunks, { type: metadata.mimeType })
+                
+                console.log('[usePeerConnection] File assembled successfully, downloading:', metadata.fileName)
+                
+                const senderDevice = devices.find(d => d.id === conn.peer)
+                addToHistory({
+                  type: 'received',
+                  fileName: metadata.fileName,
+                  fileSize: metadata.fileSize || chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+                  deviceName: senderDevice?.name || 'Unknown Device',
+                  status: 'completed',
+                  isText: false
+                })
+                
+                showNotification('Received', {
+                  body: `${metadata.fileName} is ready to download`,
+                  tag: 'transfer-received'
+                })
+                
+                setTimeout(() => {
+                  downloadFile(blob, metadata.fileName)
+                }, 100)
+                
+                setTimeout(() => {
+                  setIncomingTransfer(null)
+                  setTransferProgress(null)
+                  setIsReceiving(false)
+                  setReceivingProgress(null)
+                }, 1000)
+                
+                if (metadata.cryptoWorker) {
+                  metadata.cryptoWorker.terminate()
+                }
+                delete fileChunksRef.current[transferKey]
+                delete fileMetadataRef.current[transferKey]
+                delete transferStateRef.current[transferKey]
+              } catch (err) {
+                console.error('[usePeerConnection] Failed to assemble file:', err)
+                setTransferProgress(null)
+                if (metadata.cryptoWorker) {
+                  metadata.cryptoWorker.terminate()
+                }
+                delete fileChunksRef.current[transferKey]
+                delete fileMetadataRef.current[transferKey]
+                delete transferStateRef.current[transferKey]
+              }
+            }
+          } catch (err) {
+            console.error('[usePeerConnection] Failed to decrypt binary chunk', chunkIndex, ':', err)
+            if (metadata.cryptoWorker) {
+              metadata.cryptoWorker.terminate()
+            }
+          }
+          return
+        }
+      }
+      
+      if (arrayBuffer) {
+        const text = new TextDecoder().decode(arrayBuffer)
         try {
           data = JSON.parse(text)
         } catch (err) {
           console.error('[usePeerConnection] Failed to parse data:', err, 'text length:', text.length, 'first 100 chars:', text.substring(0, 100))
-          return
-        }
-      } else if (rawData instanceof Uint8Array) {
-        try {
-          const text = new TextDecoder().decode(rawData)
-          data = JSON.parse(text)
-        } catch (err) {
-          console.error('[usePeerConnection] Failed to parse Uint8Array data:', err, 'array length:', rawData.length, 'first 100 bytes:', Array.from(rawData.slice(0, 100)))
           return
         }
       } else if (typeof rawData === 'string') {
@@ -1358,7 +1507,7 @@ export function usePeerConnection() {
       console.log('[usePeerConnection] Transfer accepted, preparing file...')
       delete transferAcceptedRef.current[transferKey]
 
-      const CHUNK_SIZE = 128 * 1024
+      const CHUNK_SIZE = 64 * 1024
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
@@ -1539,15 +1688,24 @@ export function usePeerConnection() {
           console.log('[usePeerConnection] Sending first chunk, size:', encryptedChunk.length, 'bytes')
         }
 
-        const message = {
-          type: 'file-chunk',
-          chunkIndex: chunkIndex,
-          chunk: Array.from(encryptedChunk)
-        }
-        const encoded = encodeMessage(message)
         if (dc) {
-          dc.send(encoded)
+          const header = new ArrayBuffer(5)
+          const headerView = new DataView(header)
+          headerView.setUint8(0, 1)
+          headerView.setUint32(1, chunkIndex, true)
+          
+          const combined = new Uint8Array(header.byteLength + encryptedChunk.length)
+          combined.set(new Uint8Array(header), 0)
+          combined.set(encryptedChunk, header.byteLength)
+          
+          dc.send(combined.buffer)
         } else {
+          const message = {
+            type: 'file-chunk',
+            chunkIndex: chunkIndex,
+            chunk: Array.from(encryptedChunk)
+          }
+          const encoded = encodeMessage(message)
           conn.send(encoded)
         }
 
