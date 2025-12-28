@@ -840,6 +840,11 @@ export function usePeerConnection() {
       const dataSize = rawData instanceof ArrayBuffer ? rawData.byteLength : rawData instanceof Blob ? rawData.size : rawData instanceof Uint8Array ? rawData.length : typeof rawData === 'string' ? rawData.length : 'unknown'
       console.log('[usePeerConnection] Received raw data, type:', typeof rawData, 'constructor:', rawData?.constructor?.name, 'size:', dataSize, 'from peer:', conn.peer)
       
+      if (typeof rawData === 'number' || (typeof rawData !== 'string' && !(rawData instanceof ArrayBuffer) && !(rawData instanceof Blob) && !(rawData instanceof Uint8Array))) {
+        console.error('[usePeerConnection] Received unexpected data type:', typeof rawData, rawData)
+        return
+      }
+      
       let arrayBuffer
       if (rawData instanceof ArrayBuffer) {
         arrayBuffer = rawData
@@ -1641,14 +1646,19 @@ export function usePeerConnection() {
         
         let speed = 0
         const timeSinceLastUpdate = (now - lastSpeedUpdate) / 1000
-        if (timeSinceLastUpdate > 0.1) {
+        const totalElapsed = (now - startTime) / 1000
+        
+        if (timeSinceLastUpdate > 0.1 && lastBytesSent > 0) {
           const bytesSinceLastUpdate = bytesSent - lastBytesSent
           speed = bytesSinceLastUpdate / timeSinceLastUpdate
           lastBytesSent = bytesSent
           lastSpeedUpdate = now
-        } else {
-          const totalElapsed = (now - startTime) / 1000
-          speed = totalElapsed > 0 ? bytesSent / totalElapsed : 0
+        } else if (totalElapsed > 0.1 && bytesSent > 0) {
+          speed = bytesSent / totalElapsed
+          if (timeSinceLastUpdate > 0.1) {
+            lastBytesSent = bytesSent
+            lastSpeedUpdate = now
+          }
         }
         
         const speedFormatted = formatSpeed(speed)
@@ -1867,14 +1877,19 @@ export function usePeerConnection() {
         
         let speed = 0
         const timeSinceLastUpdate = (now - lastSpeedUpdate) / 1000
-        if (timeSinceLastUpdate > 0.1) {
+        const totalElapsed = (now - startTime) / 1000
+        
+        if (timeSinceLastUpdate > 0.1 && lastBytesSent > 0) {
           const bytesSinceLastUpdate = bytesSent - lastBytesSent
           speed = bytesSinceLastUpdate / timeSinceLastUpdate
           lastBytesSent = bytesSent
           lastSpeedUpdate = now
-        } else {
-          const totalElapsed = (now - startTime) / 1000
-          speed = totalElapsed > 0 ? bytesSent / totalElapsed : 0
+        } else if (totalElapsed > 0.1 && bytesSent > 0) {
+          speed = bytesSent / totalElapsed
+          if (timeSinceLastUpdate > 0.1) {
+            lastBytesSent = bytesSent
+            lastSpeedUpdate = now
+          }
         }
         
         const speedFormatted = formatSpeed(speed)

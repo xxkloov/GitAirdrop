@@ -2,6 +2,9 @@ import { motion } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 
 function TransferModal({ fileName, progress, speed, isReceiving = false, isDecrypting = false, isDownloading = false }) {
+  const progressValue = typeof progress === 'number' ? Math.max(0, Math.min(100, progress)) : 0
+  const displaySpeed = speed && speed !== '0 B/s' ? speed : null
+  
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -26,7 +29,7 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
             >
               <Loader2 className="w-12 h-12 text-muted-blue" />
             </motion.div>
-            {!isReceiving && progress > 0 && (
+            {!isReceiving && progressValue > 0 && (
               <motion.div
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: [1, 1.2, 1], opacity: [1, 0.8, 1] }}
@@ -36,7 +39,7 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
                 <div className="w-16 h-16 rounded-full border-4 border-muted-blue/30" />
               </motion.div>
             )}
-            {isReceiving && progress > 0 && (
+            {isReceiving && progressValue > 0 && (
               <motion.div
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: [1, 1.2, 1], opacity: [1, 0.8, 1] }}
@@ -50,8 +53,8 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
           
           <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2 tracking-tight">
             {isReceiving 
-              ? (isDecrypting ? 'Decrypting' : isDownloading ? 'Preparing' : progress === 0 ? 'Preparing' : 'Receiving')
-              : (progress === 0 ? 'Waiting' : 'Sending')
+              ? (isDecrypting ? 'Decrypting' : isDownloading ? 'Preparing' : progressValue === 0 ? 'Preparing' : 'Receiving')
+              : (progressValue === 0 ? 'Waiting' : 'Sending')
             }
           </h3>
           
@@ -61,14 +64,15 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
 
           <div className="w-full h-2.5 bg-ios-lightGray/50 dark:bg-black/40 rounded-full overflow-hidden shadow-inner relative">
             <motion.div
+              key={progressValue}
               initial={{ width: 0 }}
-              animate={{ width: `${progress}%` }}
+              animate={{ width: `${progressValue}%` }}
               className={`h-full rounded-full shadow-lg ${
                 isReceiving ? 'bg-green-500' : 'bg-muted-blue'
               }`}
-              transition={{ type: 'spring', stiffness: 200, damping: 20 }}
+              transition={{ type: 'spring', stiffness: 200, damping: 20, duration: 0.3 }}
             />
-            {progress > 0 && progress < 100 && (
+            {progressValue > 0 && progressValue < 100 && (
               <motion.div
                 animate={{ x: ['-100%', '100%'] }}
                 transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
@@ -79,20 +83,20 @@ function TransferModal({ fileName, progress, speed, isReceiving = false, isDecry
           
           <div className="flex items-center justify-between mt-2">
             <p className="text-sm font-medium text-muted-blue">
-              {Math.round(progress)}%
+              {Math.round(progressValue)}%
             </p>
-            {(progress < 100 || isDecrypting || isDownloading) && (
+            {(progressValue < 100 || isDecrypting || isDownloading) && (
               <p className="text-xs text-ios-gray dark:text-gray-400 font-medium">
                 {isReceiving
-                  ? (isDecrypting ? 'Decrypting file...' : isDownloading ? 'Preparing download...' : progress === 0 ? 'Preparing...' : 'Receiving from nearby device...')
-                  : (progress === 0 ? 'Waiting for recipient...' : (progress > 0 ? 'Sending to nearby device...' : 'Preparing...'))
+                  ? (isDecrypting ? 'Decrypting file...' : isDownloading ? 'Preparing download...' : progressValue === 0 ? 'Preparing...' : 'Receiving from nearby device...')
+                  : (progressValue === 0 ? 'Waiting for recipient...' : (progressValue > 0 ? 'Sending to nearby device...' : 'Preparing...'))
                 }
               </p>
             )}
           </div>
-          {speed && progress > 0 && (
+          {displaySpeed && progressValue > 0 && (
             <p className="text-xs text-ios-gray dark:text-gray-400 mt-1">
-              Speed: {speed}
+              Speed: {displaySpeed}
             </p>
           )}
         </div>
