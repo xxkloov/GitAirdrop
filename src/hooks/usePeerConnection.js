@@ -1066,7 +1066,7 @@ export function usePeerConnection() {
 
     try {
       const conn = peerRef.current.connect(targetPeerId, {
-        reliable: true,
+        reliable: false,
         serialization: 'binary'
       })
       
@@ -1247,10 +1247,9 @@ export function usePeerConnection() {
       console.log('[usePeerConnection] Transfer accepted, preparing file...')
       delete transferAcceptedRef.current[transferKey]
 
-      const CHUNK_SIZE = 1024 * 1024
-      const BUFFERED_AMOUNT_LOW_THRESHOLD = 4 * 1024 * 1024
-      const MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024
-      const IN_FLIGHT_CHUNKS = 10
+      const CHUNK_SIZE = 128 * 1024
+      const BUFFERED_AMOUNT_LOW_THRESHOLD = 2 * 1024 * 1024
+      const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
@@ -1301,9 +1300,7 @@ export function usePeerConnection() {
       let lastBytesSent = 0
       let lastSpeedUpdate = Date.now()
 
-      console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes')
-
-      let inFlightCount = 0
+      console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes (unordered)')
 
       const updateProgress = () => {
         const now = Date.now()
@@ -1337,13 +1334,8 @@ export function usePeerConnection() {
         }
 
         if (dc) {
-          if (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
             await waitForLowBuffer(dc)
-          } else if (inFlightCount >= IN_FLIGHT_CHUNKS) {
-            if (dc.bufferedAmount > BUFFERED_AMOUNT_LOW_THRESHOLD) {
-              await waitForLowBuffer(dc)
-            }
-            inFlightCount = Math.max(0, inFlightCount - IN_FLIGHT_CHUNKS + 2)
           }
         }
 
@@ -1367,9 +1359,12 @@ export function usePeerConnection() {
         const encoded = encodeMessage(message)
         conn.send(encoded)
 
-        inFlightCount++
         chunksSent++
         bytesSent += chunkData.byteLength
+
+        if (dc) {
+          await waitForLowBuffer(dc)
+        }
 
         const now = Date.now()
         if (now - lastProgressUpdate >= 100 || chunkIndex === totalChunks - 1 || chunksSent === 1) {
