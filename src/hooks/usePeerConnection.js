@@ -1295,13 +1295,41 @@ export function usePeerConnection() {
       }
 
       const startTime = Date.now()
-      let bytesAcknowledged = 0
+      let bytesSent = 0
       let chunksSent = 0
       let lastProgressUpdate = Date.now()
+      let lastBytesSent = 0
+      let lastSpeedUpdate = Date.now()
 
       console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes')
 
       let inFlightCount = 0
+
+      const updateProgress = () => {
+        const now = Date.now()
+        const progress = Math.round((chunksSent / totalChunks) * 100)
+        
+        let speed = 0
+        const timeSinceLastUpdate = (now - lastSpeedUpdate) / 1000
+        if (timeSinceLastUpdate > 0.1) {
+          const bytesSinceLastUpdate = bytesSent - lastBytesSent
+          speed = bytesSinceLastUpdate / timeSinceLastUpdate
+          lastBytesSent = bytesSent
+          lastSpeedUpdate = now
+        } else {
+          const totalElapsed = (now - startTime) / 1000
+          speed = totalElapsed > 0 ? bytesSent / totalElapsed : 0
+        }
+        
+        const speedFormatted = formatSpeed(speed)
+        
+        setTransferProgress({
+          fileName: file.name,
+          progress: progress,
+          speed: speedFormatted
+        })
+        lastProgressUpdate = now
+      }
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         if (!conn.open) {
@@ -1341,26 +1369,18 @@ export function usePeerConnection() {
 
         inFlightCount++
         chunksSent++
-        bytesAcknowledged += chunkData.byteLength
+        bytesSent += chunkData.byteLength
 
         const now = Date.now()
-        if (now - lastProgressUpdate >= 50 || chunkIndex === totalChunks - 1 || chunksSent % 2 === 0) {
-          const progress = Math.round((chunksSent / totalChunks) * 100)
-          const elapsed = (now - startTime) / 1000
-          const speed = elapsed > 0 ? bytesAcknowledged / elapsed : 0
-          const speedFormatted = formatSpeed(speed)
-          
-          setTransferProgress({
-            fileName: file.name,
-            progress: progress,
-            speed: speedFormatted
-          })
-          lastProgressUpdate = now
+        if (now - lastProgressUpdate >= 100 || chunkIndex === totalChunks - 1 || chunksSent === 1) {
+          updateProgress()
         }
       }
+      
+      updateProgress()
 
       const totalTime = (Date.now() - startTime) / 1000
-      const avgSpeed = bytesAcknowledged / totalTime
+      const avgSpeed = bytesSent / totalTime
       setTransferProgress({
         fileName: file.name,
         progress: 100,
@@ -1483,15 +1503,43 @@ export function usePeerConnection() {
       }
 
       const startTime = Date.now()
-      let bytesAcknowledged = 0
+      let bytesSent = 0
       let chunksSent = 0
       let lastProgressUpdate = Date.now()
+      let lastBytesSent = 0
+      let lastSpeedUpdate = Date.now()
 
       console.log('[usePeerConnection] Sending file via WebSocket in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes')
 
       const targetPeerIdBytes = new TextEncoder().encode(targetPeerId)
       const headerSize = 1 + 2 + targetPeerIdBytes.length + 4
       let wsInFlight = 0
+
+      const updateProgress = () => {
+        const now = Date.now()
+        const progress = Math.round((chunksSent / totalChunks) * 100)
+        
+        let speed = 0
+        const timeSinceLastUpdate = (now - lastSpeedUpdate) / 1000
+        if (timeSinceLastUpdate > 0.1) {
+          const bytesSinceLastUpdate = bytesSent - lastBytesSent
+          speed = bytesSinceLastUpdate / timeSinceLastUpdate
+          lastBytesSent = bytesSent
+          lastSpeedUpdate = now
+        } else {
+          const totalElapsed = (now - startTime) / 1000
+          speed = totalElapsed > 0 ? bytesSent / totalElapsed : 0
+        }
+        
+        const speedFormatted = formatSpeed(speed)
+        
+        setTransferProgress({
+          fileName: file.name,
+          progress: progress,
+          speed: speedFormatted
+        })
+        lastProgressUpdate = now
+      }
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         if (wsRef.current.readyState !== WebSocket.OPEN) {
@@ -1530,26 +1578,18 @@ export function usePeerConnection() {
 
         wsInFlight++
         chunksSent++
-        bytesAcknowledged += chunkData.byteLength
+        bytesSent += chunkData.byteLength
 
         const now = Date.now()
-        if (now - lastProgressUpdate >= 50 || chunkIndex === totalChunks - 1 || chunksSent % 2 === 0) {
-          const progress = Math.round((chunksSent / totalChunks) * 100)
-          const elapsed = (now - startTime) / 1000
-          const speed = elapsed > 0 ? bytesAcknowledged / elapsed : 0
-          const speedFormatted = formatSpeed(speed)
-          
-          setTransferProgress({
-            fileName: file.name,
-            progress: progress,
-            speed: speedFormatted
-          })
-          lastProgressUpdate = now
+        if (now - lastProgressUpdate >= 100 || chunkIndex === totalChunks - 1 || chunksSent === 1) {
+          updateProgress()
         }
       }
+      
+      updateProgress()
 
       const totalTime = (Date.now() - startTime) / 1000
-      const avgSpeed = bytesAcknowledged / totalTime
+      const avgSpeed = bytesSent / totalTime
       setTransferProgress({
         fileName: file.name,
         progress: 100,
