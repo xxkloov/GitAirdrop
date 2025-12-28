@@ -1063,11 +1063,6 @@ export function usePeerConnection() {
     const RETRY_DELAYS = [500, 1000, 2000]
 
     connectingRef.current[targetPeerId] = true
-    
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-      pollingIntervalRef.current = null
-    }
 
     try {
       const conn = peerRef.current.connect(targetPeerId, {
@@ -1077,6 +1072,7 @@ export function usePeerConnection() {
       
       conn.on('open', () => {
         delete connectingRef.current[targetPeerId]
+        restartPolling()
       })
       
       conn.on('error', (err) => {
@@ -1088,11 +1084,14 @@ export function usePeerConnection() {
           setTimeout(() => {
             connectToPeer(targetPeerId, retryCount + 1)
           }, delay)
+        } else {
+          restartPolling()
         }
       })
       
       conn.on('close', () => {
         delete connectingRef.current[targetPeerId]
+        restartPolling()
       })
       
       setupConnection(conn)
@@ -1104,15 +1103,52 @@ export function usePeerConnection() {
         setTimeout(() => {
           connectToPeer(targetPeerId, retryCount + 1)
         }, delay)
+      } else {
+        restartPolling()
       }
     }
   }
 
-  const sendFile = async (file, targetPeerId) => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-      pollingIntervalRef.current = null
+  const restartPolling = () => {
+    if (pollingIntervalRef.current) return
+    const pollWithVisibility = () => {
+      if (!document.hidden || isTransferringRef.current || incomingTransferRef.current) {
+        const currentPeerId = peerRef.current?.id
+        if (!currentPeerId) return
+        fetch(`/api/devices?exclude=${encodeURIComponent(currentPeerId)}`)
+          .then(response => response.json())
+          .then(allDevices => {
+            if (!Array.isArray(allDevices)) return
+            setDevices(prevDevices => {
+              const deviceMap = new Map()
+              allDevices.forEach(device => {
+                if (device && device.id && device.id !== currentPeerId) {
+                  if (!deviceMap.has(device.id)) {
+                    deviceMap.set(device.id, device)
+                  } else {
+                    const existing = deviceMap.get(device.id)
+                    if (device.lastSeen && existing.lastSeen && device.lastSeen > existing.lastSeen) {
+                      deviceMap.set(device.id, device)
+                    }
+                  }
+                }
+              })
+              prevDevices.forEach(device => {
+                if (device && device.id && device.id !== currentPeerId && !deviceMap.has(device.id)) {
+                  deviceMap.set(device.id, device)
+                }
+              })
+              return Array.from(deviceMap.values())
+            })
+          })
+          .catch(err => console.error('[usePeerConnection] Failed to poll devices:', err))
+      }
     }
+    pollingIntervalRef.current = setInterval(pollWithVisibility, 300)
+    pollWithVisibility()
+  }
+
+  const sendFile = async (file, targetPeerId) => {
     
     if (isLocalhostRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return sendFileViaWebSocket(file, targetPeerId)
@@ -1334,6 +1370,7 @@ export function usePeerConnection() {
       setTimeout(() => {
         setIsTransferring(false)
         setTransferProgress(null)
+        restartPolling()
       }, 500)
 
       console.log('[usePeerConnection] File sent successfully:', file.name)
@@ -1346,6 +1383,7 @@ export function usePeerConnection() {
       setError('Failed to send file. Connection was interrupted.')
       setIsTransferring(false)
       setTransferProgress(null)
+      restartPolling()
     }
   }
   
@@ -1673,10 +1711,6 @@ export function usePeerConnection() {
   }
 
   const sendText = async (text, targetPeerId) => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-      pollingIntervalRef.current = null
-    }
     
     let conn = connectionsRef.current[targetPeerId]
     
@@ -1715,9 +1749,11 @@ export function usePeerConnection() {
         body: `Text sent to ${targetDevice?.name || 'device'}`,
         tag: 'text-sent'
       })
+      restartPolling()
     } catch (err) {
       console.error('[usePeerConnection] Failed to send text:', err)
       setError('Failed to send text.')
+      restartPolling()
     }
   }
 
