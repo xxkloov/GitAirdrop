@@ -1314,7 +1314,6 @@ export function usePeerConnection() {
           lastProgressUpdate = now
         }
 
-        const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
         if (dc) {
           await waitForLowBuffer(dc)
         }
