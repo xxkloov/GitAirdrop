@@ -1211,10 +1211,10 @@ export function usePeerConnection() {
       console.log('[usePeerConnection] Transfer accepted, preparing file...')
       delete transferAcceptedRef.current[transferKey]
 
-      const CHUNK_SIZE = 512 * 1024
-      const BUFFERED_AMOUNT_LOW_THRESHOLD = 2 * 1024 * 1024
-      const MAX_BUFFERED_AMOUNT = 12 * 1024 * 1024
-      const IN_FLIGHT_CHUNKS = 3
+      const CHUNK_SIZE = 1024 * 1024
+      const BUFFERED_AMOUNT_LOW_THRESHOLD = 4 * 1024 * 1024
+      const MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024
+      const IN_FLIGHT_CHUNKS = 10
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
@@ -1273,13 +1273,13 @@ export function usePeerConnection() {
         }
 
         if (dc) {
-          while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          if (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
             await waitForLowBuffer(dc)
-          }
-          
-          if (inFlightCount >= IN_FLIGHT_CHUNKS) {
-            await waitForLowBuffer(dc)
-            inFlightCount = Math.max(0, inFlightCount - IN_FLIGHT_CHUNKS + 1)
+          } else if (inFlightCount >= IN_FLIGHT_CHUNKS) {
+            if (dc.bufferedAmount > BUFFERED_AMOUNT_LOW_THRESHOLD) {
+              await waitForLowBuffer(dc)
+            }
+            inFlightCount = Math.max(0, inFlightCount - IN_FLIGHT_CHUNKS + 2)
           }
         }
 
@@ -1308,10 +1308,10 @@ export function usePeerConnection() {
         bytesAcknowledged += chunkData.byteLength
 
         const now = Date.now()
-        if (now - lastProgressUpdate >= 100 || chunkIndex === totalChunks - 1) {
+        if (now - lastProgressUpdate >= 50 || chunkIndex === totalChunks - 1 || chunksSent % 2 === 0) {
           const progress = Math.round((chunksSent / totalChunks) * 100)
           const elapsed = (now - startTime) / 1000
-          const speed = bytesAcknowledged / elapsed
+          const speed = elapsed > 0 ? bytesAcknowledged / elapsed : 0
           const speedFormatted = formatSpeed(speed)
           
           setTransferProgress({
@@ -1399,9 +1399,9 @@ export function usePeerConnection() {
       console.log('[usePeerConnection] Transfer accepted, preparing file...')
       delete transferAcceptedRef.current[transferKey]
 
-      const CHUNK_SIZE = 1024 * 1024
-      const WS_BUFFER_THRESHOLD = 8 * 1024 * 1024
-      const WS_IN_FLIGHT = 5
+      const CHUNK_SIZE = 2 * 1024 * 1024
+      const WS_BUFFER_THRESHOLD = 16 * 1024 * 1024
+      const WS_IN_FLIGHT = 10
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
@@ -1495,10 +1495,10 @@ export function usePeerConnection() {
         bytesAcknowledged += chunkData.byteLength
 
         const now = Date.now()
-        if (now - lastProgressUpdate >= 100 || chunkIndex === totalChunks - 1) {
+        if (now - lastProgressUpdate >= 50 || chunkIndex === totalChunks - 1 || chunksSent % 2 === 0) {
           const progress = Math.round((chunksSent / totalChunks) * 100)
           const elapsed = (now - startTime) / 1000
-          const speed = bytesAcknowledged / elapsed
+          const speed = elapsed > 0 ? bytesAcknowledged / elapsed : 0
           const speedFormatted = formatSpeed(speed)
           
           setTransferProgress({
