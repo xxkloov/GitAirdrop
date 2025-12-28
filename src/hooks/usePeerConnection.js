@@ -838,12 +838,17 @@ export function usePeerConnection() {
     conn.on('data', async (rawData) => {
       let data
       const dataSize = rawData instanceof ArrayBuffer ? rawData.byteLength : rawData instanceof Blob ? rawData.size : rawData instanceof Uint8Array ? rawData.length : typeof rawData === 'string' ? rawData.length : 'unknown'
-      console.log('[usePeerConnection] Received raw data, type:', typeof rawData, 'constructor:', rawData?.constructor?.name, 'size:', dataSize, 'from peer:', conn.peer)
       
-      if (typeof rawData === 'number' || (typeof rawData !== 'string' && !(rawData instanceof ArrayBuffer) && !(rawData instanceof Blob) && !(rawData instanceof Uint8Array))) {
+      if (typeof rawData === 'number') {
+        return
+      }
+      
+      if (typeof rawData !== 'string' && !(rawData instanceof ArrayBuffer) && !(rawData instanceof Blob) && !(rawData instanceof Uint8Array)) {
         console.error('[usePeerConnection] Received unexpected data type:', typeof rawData, rawData)
         return
       }
+      
+      console.log('[usePeerConnection] Received raw data, type:', typeof rawData, 'constructor:', rawData?.constructor?.name, 'size:', dataSize, 'from peer:', conn.peer)
       
       let arrayBuffer
       if (rawData instanceof ArrayBuffer) {

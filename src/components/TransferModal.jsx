@@ -35,26 +35,6 @@ function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isRec
             >
               <Loader2 className="w-12 h-12 text-muted-blue" />
             </motion.div>
-            {!isReceiving && progressValue > 0 && (
-              <motion.div
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: [1, 1.2, 1], opacity: [1, 0.8, 1] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-                className="absolute inset-0 flex items-center justify-center"
-              >
-                <div className="w-16 h-16 rounded-full border-4 border-muted-blue/30" />
-              </motion.div>
-            )}
-            {isReceiving && progressValue > 0 && (
-              <motion.div
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: [1, 1.2, 1], opacity: [1, 0.8, 1] }}
-                transition={{ repeat: Infinity, duration: 2, delay: 0.5 }}
-                className="absolute inset-0 flex items-center justify-center"
-              >
-                <div className="w-16 h-16 rounded-full border-4 border-green-500/30" />
-              </motion.div>
-            )}
           </motion.div>
           
           <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2 tracking-tight">
@@ -70,8 +50,6 @@ function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isRec
 
           <div className="w-full h-3 bg-ios-lightGray/70 dark:bg-black/60 rounded-full overflow-hidden shadow-inner relative border border-gray-300/30 dark:border-white/10">
             <motion.div
-              key={progressValue}
-              initial={{ width: 0 }}
               animate={{ width: `${progressValue}%` }}
               className={`h-full rounded-full shadow-lg ${
                 isReceiving ? 'bg-gradient-to-r from-green-400 to-green-600' : 'bg-gradient-to-r from-blue-400 to-muted-blue'
@@ -98,11 +76,13 @@ function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isRec
                 </p>
               )}
             </div>
-            {displaySpeed && progressValue > 0 && (
+            {(displaySpeed || (progressValue > 0 && progressValue < 100) || isDecrypting || isDownloading) && (
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Speed: {displaySpeed}
-                </p>
+                {displaySpeed && (
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Speed: {displaySpeed}
+                  </p>
+                )}
                 {(progressValue < 100 || isDecrypting || isDownloading) && (
                   <p className="text-xs text-ios-gray dark:text-gray-400 font-medium">
                     {isReceiving
@@ -113,11 +93,11 @@ function TransferModal({ fileName, progress, speed, bytesSent, totalBytes, isRec
                 )}
               </div>
             )}
-            {(!displaySpeed || progressValue === 0) && (progressValue < 100 || isDecrypting || isDownloading) && (
+            {(!displaySpeed && progressValue === 0 && !isDecrypting && !isDownloading) && (
               <p className="text-xs text-ios-gray dark:text-gray-400 font-medium text-center">
                 {isReceiving
-                  ? (isDecrypting ? 'Decrypting file...' : isDownloading ? 'Preparing download...' : progressValue === 0 ? 'Preparing...' : 'Receiving from nearby device...')
-                  : (progressValue === 0 ? 'Waiting for recipient...' : (progressValue > 0 ? 'Sending to nearby device...' : 'Preparing...'))
+                  ? 'Preparing...'
+                  : 'Waiting for recipient...'
                 }
               </p>
             )}
