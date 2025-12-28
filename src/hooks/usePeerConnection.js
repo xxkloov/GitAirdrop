@@ -1211,9 +1211,10 @@ export function usePeerConnection() {
       console.log('[usePeerConnection] Transfer accepted, preparing file...')
       delete transferAcceptedRef.current[transferKey]
 
-      const CHUNK_SIZE = 256 * 1024
-      const BUFFERED_AMOUNT_LOW_THRESHOLD = 1024 * 1024
-      const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024
+      const CHUNK_SIZE = 512 * 1024
+      const BUFFERED_AMOUNT_LOW_THRESHOLD = 2 * 1024 * 1024
+      const MAX_BUFFERED_AMOUNT = 12 * 1024 * 1024
+      const IN_FLIGHT_CHUNKS = 3
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
@@ -1264,15 +1265,22 @@ export function usePeerConnection() {
 
       console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes')
 
+      const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
+      let inFlightCount = 0
+
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         if (!conn.open) {
           throw new Error('Connection closed')
         }
 
-        const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
         if (dc) {
           while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
             await waitForLowBuffer(dc)
+          }
+          
+          if (inFlightCount >= IN_FLIGHT_CHUNKS) {
+            await waitForLowBuffer(dc)
+            inFlightCount = Math.max(0, inFlightCount - IN_FLIGHT_CHUNKS + 1)
           }
         }
 
@@ -1296,6 +1304,7 @@ export function usePeerConnection() {
         const encoded = encodeMessage(message)
         conn.send(encoded)
 
+        inFlightCount++
         chunksSent++
         bytesAcknowledged += chunkData.byteLength
 
@@ -1312,10 +1321,6 @@ export function usePeerConnection() {
             speed: speedFormatted
           })
           lastProgressUpdate = now
-        }
-
-        if (dc) {
-          await waitForLowBuffer(dc)
         }
       }
 
@@ -1395,8 +1400,9 @@ export function usePeerConnection() {
       console.log('[usePeerConnection] Transfer accepted, preparing file...')
       delete transferAcceptedRef.current[transferKey]
 
-      const CHUNK_SIZE = 512 * 1024
-      const WS_BUFFER_THRESHOLD = 4 * 1024 * 1024
+      const CHUNK_SIZE = 1024 * 1024
+      const WS_BUFFER_THRESHOLD = 8 * 1024 * 1024
+      const WS_IN_FLIGHT = 5
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
@@ -1446,12 +1452,21 @@ export function usePeerConnection() {
 
       console.log('[usePeerConnection] Sending file via WebSocket in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes')
 
+      const targetPeerIdBytes = new TextEncoder().encode(targetPeerId)
+      const headerSize = 1 + 2 + targetPeerIdBytes.length + 4
+      let wsInFlight = 0
+
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         if (wsRef.current.readyState !== WebSocket.OPEN) {
           throw new Error('WebSocket closed')
         }
 
-        await waitForWSBuffer()
+        if (wsInFlight >= WS_IN_FLIGHT) {
+          await waitForWSBuffer()
+          wsInFlight = Math.max(0, wsInFlight - WS_IN_FLIGHT + 1)
+        } else if (wsRef.current.bufferedAmount > WS_BUFFER_THRESHOLD) {
+          await waitForWSBuffer()
+        }
 
         const chunkStart = chunkIndex * CHUNK_SIZE
         const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, fileSize)
@@ -1461,8 +1476,7 @@ export function usePeerConnection() {
         const chunkIV = deriveChunkIV(baseIV, chunkIndex)
         const encryptedChunk = await encryptChunk(chunkData, key, chunkIV)
 
-        const targetPeerIdBytes = new TextEncoder().encode(targetPeerId)
-        const header = new ArrayBuffer(1 + 2 + targetPeerIdBytes.length + 4)
+        const header = new ArrayBuffer(headerSize)
         const headerView = new DataView(header)
         headerView.setUint8(0, 2)
         headerView.setUint16(1, targetPeerIdBytes.length, true)
@@ -1471,12 +1485,13 @@ export function usePeerConnection() {
         const chunkIndexOffset = 3 + targetPeerIdBytes.length
         headerView.setUint32(chunkIndexOffset, chunkIndex, true)
         
-        const combined = new Uint8Array(header.byteLength + encryptedChunk.length)
+        const combined = new Uint8Array(headerSize + encryptedChunk.length)
         combined.set(headerArray, 0)
-        combined.set(encryptedChunk, header.byteLength)
+        combined.set(encryptedChunk, headerSize)
         
         wsRef.current.send(combined.buffer)
 
+        wsInFlight++
         chunksSent++
         bytesAcknowledged += chunkData.byteLength
 
