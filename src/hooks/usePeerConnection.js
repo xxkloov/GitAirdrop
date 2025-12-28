@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import Peer from 'peerjs'
 import { encryptFile, decryptFile, generateEncryptionKey, deriveChunkIV, encryptChunk, decryptChunk } from '../utils/crypto'
 import { requestNotificationPermission, showNotification } from '../utils/notifications'
+import { PacedSender } from '../utils/pacedSender'
 
 export function usePeerConnection() {
   const [peerId, setPeerId] = useState(null)
@@ -754,6 +755,76 @@ export function usePeerConnection() {
   const setupConnection = (conn) => {
     connectionsRef.current[conn.peer] = conn
     
+    const logICECandidates = () => {
+      try {
+        const peerConnection = conn.peerConnection || conn._peerConnection
+        if (peerConnection && peerConnection instanceof RTCPeerConnection) {
+          peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              const candidate = event.candidate.candidate
+              let candidateType = 'unknown'
+              if (candidate.includes('typ host')) {
+                candidateType = 'host'
+              } else if (candidate.includes('typ srflx')) {
+                candidateType = 'srflx'
+              } else if (candidate.includes('typ relay')) {
+                candidateType = 'relay'
+                console.error('[usePeerConnection] WARNING: TURN/RELAY candidate detected! Connection will be relayed through server and will be SLOW!')
+              } else if (candidate.includes('typ prflx')) {
+                candidateType = 'prflx'
+              }
+              console.log(`[usePeerConnection] ICE candidate (${candidateType}):`, candidate.substring(0, 100))
+            } else {
+              console.log('[usePeerConnection] ICE gathering complete')
+              const stats = peerConnection.getStats()
+              stats.then(result => {
+                result.forEach(report => {
+                  if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                    const localCandidate = result.get(report.localCandidateId)
+                    const remoteCandidate = result.get(report.remoteCandidateId)
+                    if (localCandidate && localCandidate.candidateType === 'relay') {
+                      console.error('[usePeerConnection] CRITICAL: Connection is using TURN/RELAY! Transfer will be slow!')
+                    } else if (localCandidate && localCandidate.candidateType === 'host') {
+                      console.log('[usePeerConnection] Direct LAN connection established (host)')
+                    } else if (localCandidate && localCandidate.candidateType === 'srflx') {
+                      console.log('[usePeerConnection] NAT traversal connection established (srflx)')
+                    }
+                  }
+                })
+              })
+            }
+          }
+          
+          peerConnection.oniceconnectionstatechange = () => {
+            const state = peerConnection.iceConnectionState
+            console.log('[usePeerConnection] ICE connection state:', state)
+            if (state === 'connected' || state === 'completed') {
+              peerConnection.getStats().then(result => {
+                let usingRelay = false
+                result.forEach(report => {
+                  if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                    const localCandidate = result.get(report.localCandidateId)
+                    if (localCandidate && localCandidate.candidateType === 'relay') {
+                      usingRelay = true
+                    }
+                  }
+                })
+                if (usingRelay) {
+                  console.error('[usePeerConnection] CONNECTION ESTABLISHED BUT USING TURN/RELAY - TRANSFER WILL BE SLOW!')
+                } else {
+                  console.log('[usePeerConnection] Direct connection established - optimal for file transfer')
+                }
+              })
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[usePeerConnection] Could not access RTCPeerConnection for ICE logging:', err)
+      }
+    }
+    
+    logICECandidates()
+    
     conn.on('open', () => {
       console.log('[usePeerConnection] Connection established with:', conn.peer)
       setIsConnected(true)
@@ -825,14 +896,18 @@ export function usePeerConnection() {
         fileChunksRef.current[transferKey] = new Array(totalChunks)
         const keyData = new Uint8Array(key)
         const baseIV = new Uint8Array(iv)
-        const importedKey = await crypto.subtle.importKey(
-          'raw',
-          keyData,
-          { name: 'AES-GCM', length: 256 },
-          false,
-          ['decrypt']
-        )
-        fileMetadataRef.current[transferKey] = { key: importedKey, baseIV, mimeType, totalChunks, fileName, fileSize }
+        
+        const cryptoWorker = new Worker(new URL('../utils/cryptoWorker.js', import.meta.url), { type: 'module' })
+        await new Promise((resolve) => {
+          cryptoWorker.postMessage({ type: 'init-decrypt-key', data: { keyData: Array.from(keyData) } })
+          cryptoWorker.onmessage = (e) => {
+            if (e.data.type === 'decrypt-key-ready') {
+              resolve()
+            }
+          }
+        })
+        
+        fileMetadataRef.current[transferKey] = { cryptoWorker, baseIV, mimeType, totalChunks, fileName, fileSize }
         transferStateRef.current[transferKey] = 'transferring'
         setIsReceiving(true)
         setReceivingProgress({
@@ -890,8 +965,27 @@ export function usePeerConnection() {
         }
         
         try {
-          const chunkIV = deriveChunkIV(metadata.baseIV, chunkIndex)
-          const decryptedChunk = await decryptChunk(chunkArray, metadata.key, chunkIV)
+          const decryptedChunk = await new Promise((resolve, reject) => {
+            const handler = (e) => {
+              if (e.data.type === 'chunk-decrypted' && e.data.chunkIndex === chunkIndex) {
+                metadata.cryptoWorker.removeEventListener('message', handler)
+                resolve(new Uint8Array(e.data.decrypted))
+              } else if (e.data.type === 'error') {
+                metadata.cryptoWorker.removeEventListener('message', handler)
+                reject(new Error(e.data.error))
+              }
+            }
+            metadata.cryptoWorker.addEventListener('message', handler)
+            metadata.cryptoWorker.postMessage({
+              type: 'decrypt-chunk',
+              data: {
+                encryptedChunk: Array.from(chunkArray),
+                baseIV: Array.from(metadata.baseIV),
+                chunkIndex: chunkIndex
+              }
+            }, [chunkArray.buffer])
+          })
+          
           fileChunksRef.current[transferKey][chunkIndex] = decryptedChunk
           console.log('[usePeerConnection] Decrypted and stored chunk', chunkIndex, 'size:', decryptedChunk.length, 'bytes')
 
@@ -964,12 +1058,18 @@ export function usePeerConnection() {
                 setReceivingProgress(null)
               }, 1000)
               
+              if (metadata.cryptoWorker) {
+                metadata.cryptoWorker.terminate()
+              }
               delete fileChunksRef.current[transferKey]
               delete fileMetadataRef.current[transferKey]
               delete transferStateRef.current[transferKey]
             } catch (err) {
               console.error('[usePeerConnection] Failed to assemble file:', err)
               setTransferProgress(null)
+              if (metadata.cryptoWorker) {
+                metadata.cryptoWorker.terminate()
+              }
               delete fileChunksRef.current[transferKey]
               delete fileMetadataRef.current[transferKey]
               delete transferStateRef.current[transferKey]
@@ -977,6 +1077,9 @@ export function usePeerConnection() {
           }
         } catch (err) {
           console.error('[usePeerConnection] Failed to decrypt chunk', chunkIndex, ':', err)
+          if (metadata.cryptoWorker) {
+            metadata.cryptoWorker.terminate()
+          }
         }
       } else if (data.type === 'transfer-accepted') {
         const transferKey = `${conn.peer}_${data.fileName}`
@@ -1149,9 +1252,12 @@ export function usePeerConnection() {
   }
 
   const sendFile = async (file, targetPeerId) => {
+    console.warn('[usePeerConnection] WebSocket file transfer fallback is DISABLED. Using WebRTC DataChannel only.')
     
     if (isLocalhostRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return sendFileViaWebSocket(file, targetPeerId)
+      console.error('[usePeerConnection] WebSocket fallback requested but DISABLED. Failing fast.')
+      setError('WebRTC connection required. WebSocket fallback is disabled for LAN transfers.')
+      return
     }
     
     let conn = connectionsRef.current[targetPeerId]
@@ -1248,20 +1354,35 @@ export function usePeerConnection() {
       delete transferAcceptedRef.current[transferKey]
 
       const CHUNK_SIZE = 128 * 1024
-      const BUFFERED_AMOUNT_LOW_THRESHOLD = 2 * 1024 * 1024
-      const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024
 
       const fileSize = file.size
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
 
-      const { key, keyData } = await generateEncryptionKey()
+      const cryptoWorker = new Worker(new URL('../utils/cryptoWorker.js', import.meta.url), { type: 'module' })
+      
+      const keyPromise = new Promise((resolve) => {
+        cryptoWorker.postMessage({ type: 'init-encrypt-key' })
+        cryptoWorker.onmessage = (e) => {
+          if (e.data.type === 'encrypt-key-ready') {
+            resolve(e.data.keyData)
+          }
+        }
+      })
+      
+      const keyData = await keyPromise
       const baseIV = crypto.getRandomValues(new Uint8Array(12))
 
       const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
-      if (dc) {
-        dc.binaryType = 'arraybuffer'
-        dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
+      if (!dc) {
+        throw new Error('Data channel not available. WebRTC connection may not be established.')
       }
+      
+      dc.binaryType = 'arraybuffer'
+      
+      console.log('[usePeerConnection] Using native WebRTC DataChannel for file transfer')
+      console.log('[usePeerConnection] DataChannel state:', dc.readyState)
+      console.log('[usePeerConnection] DataChannel ordered:', dc.ordered)
+      console.log('[usePeerConnection] DataChannel reliable:', dc.reliable !== false)
 
       const formatSpeed = (bytesPerSecond) => {
         if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s'
@@ -1273,14 +1394,51 @@ export function usePeerConnection() {
         type: 'file-metadata',
         fileName: file.name,
         totalChunks: totalChunks,
-        key: Array.from(keyData),
+        key: keyData,
         iv: Array.from(baseIV),
         mimeType: file.type,
         fileSize: fileSize
       }))
 
-      const waitForLowBuffer = (dc) => {
-        if (!dc) return Promise.resolve()
+      const encryptChunkInWorker = (chunkData, chunkIndex) => {
+        return new Promise((resolve, reject) => {
+          const handler = (e) => {
+            if (e.data.type === 'chunk-encrypted' && e.data.chunkIndex === chunkIndex) {
+              cryptoWorker.removeEventListener('message', handler)
+              resolve(new Uint8Array(e.data.encrypted))
+            } else if (e.data.type === 'error') {
+              cryptoWorker.removeEventListener('message', handler)
+              reject(new Error(e.data.error))
+            }
+          }
+          cryptoWorker.addEventListener('message', handler)
+          cryptoWorker.postMessage({
+            type: 'encrypt-chunk',
+            data: {
+              chunkData: chunkData,
+              baseIV: Array.from(baseIV),
+              chunkIndex: chunkIndex
+            }
+          }, [chunkData])
+        })
+      }
+
+      const startTime = Date.now()
+      let bytesSent = 0
+      let chunksSent = 0
+      let lastProgressUpdate = Date.now()
+      let lastBytesSent = 0
+      let lastSpeedUpdate = Date.now()
+      let lastBufferedAmountLog = Date.now()
+
+      console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes (ordered, reliable)')
+
+      const BUFFERED_AMOUNT_LOW_THRESHOLD = 2 * 1024 * 1024
+      const MAX_BUFFERED_AMOUNT = 4 * 1024 * 1024
+      
+      dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
+
+      const waitForLowBuffer = () => {
         if (dc.bufferedAmount <= dc.bufferedAmountLowThreshold) {
           return Promise.resolve()
         }
@@ -1292,15 +1450,6 @@ export function usePeerConnection() {
           dc.addEventListener('bufferedamountlow', onLow)
         })
       }
-
-      const startTime = Date.now()
-      let bytesSent = 0
-      let chunksSent = 0
-      let lastProgressUpdate = Date.now()
-      let lastBytesSent = 0
-      let lastSpeedUpdate = Date.now()
-
-      console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes (unordered)')
 
       const updateProgress = () => {
         const now = Date.now()
@@ -1320,6 +1469,11 @@ export function usePeerConnection() {
         
         const speedFormatted = formatSpeed(speed)
         
+        if (now - lastBufferedAmountLog > 1000) {
+          console.log(`[usePeerConnection] bufferedAmount: ${(dc.bufferedAmount / 1024).toFixed(1)} KB, speed: ${speedFormatted}`)
+          lastBufferedAmountLog = now
+        }
+        
         setTransferProgress({
           fileName: file.name,
           progress: progress,
@@ -1333,10 +1487,8 @@ export function usePeerConnection() {
           throw new Error('Connection closed')
         }
 
-        if (dc) {
-          while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-            await waitForLowBuffer(dc)
-          }
+        while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          await waitForLowBuffer()
         }
 
         const chunkStart = chunkIndex * CHUNK_SIZE
@@ -1344,8 +1496,7 @@ export function usePeerConnection() {
         const fileSlice = file.slice(chunkStart, chunkEnd)
         const chunkData = await fileSlice.arrayBuffer()
 
-        const chunkIV = deriveChunkIV(baseIV, chunkIndex)
-        const encryptedChunk = await encryptChunk(chunkData, key, chunkIV)
+        const encryptedChunk = await encryptChunkInWorker(chunkData, chunkIndex)
 
         if (chunkIndex === 0) {
           console.log('[usePeerConnection] Sending first chunk, size:', encryptedChunk.length, 'bytes')
@@ -1357,14 +1508,12 @@ export function usePeerConnection() {
           chunk: Array.from(encryptedChunk)
         }
         const encoded = encodeMessage(message)
-        conn.send(encoded)
+        dc.send(encoded)
 
         chunksSent++
         bytesSent += chunkData.byteLength
 
-        if (dc) {
-          await waitForLowBuffer(dc)
-        }
+        await waitForLowBuffer()
 
         const now = Date.now()
         if (now - lastProgressUpdate >= 100 || chunkIndex === totalChunks - 1 || chunksSent === 1) {
@@ -1374,8 +1523,11 @@ export function usePeerConnection() {
       
       updateProgress()
 
+      cryptoWorker.terminate()
+
       const totalTime = (Date.now() - startTime) / 1000
       const avgSpeed = bytesSent / totalTime
+      console.log(`[usePeerConnection] Transfer complete. Total: ${(bytesSent / 1024 / 1024).toFixed(2)} MB, Time: ${totalTime.toFixed(2)}s, Avg Speed: ${formatSpeed(avgSpeed)}`)
       setTransferProgress({
         fileName: file.name,
         progress: 100,

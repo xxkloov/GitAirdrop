@@ -1,28 +1,45 @@
+let encryptionKey = null
+let decryptionKey = null
+
 self.onmessage = async function(e) {
   const { type, data } = e.data
 
   try {
-    if (type === 'init-key') {
-      const key = await crypto.subtle.generateKey(
+    if (type === 'init-encrypt-key') {
+      encryptionKey = await crypto.subtle.generateKey(
         { name: 'AES-GCM', length: 256 },
         true,
-        ['encrypt', 'decrypt']
+        ['encrypt']
       )
-      const exportedKey = await crypto.subtle.exportKey('raw', key)
+      const exportedKey = await crypto.subtle.exportKey('raw', encryptionKey)
       self.postMessage({
-        type: 'key-ready',
-        keyData: Array.from(new Uint8Array(exportedKey)),
-        key: key
-      }, [key])
+        type: 'encrypt-key-ready',
+        keyData: Array.from(new Uint8Array(exportedKey))
+      })
+    } else if (type === 'init-decrypt-key') {
+      const keyData = new Uint8Array(data.keyData)
+      decryptionKey = await crypto.subtle.importKey(
+        'raw',
+        keyData,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt']
+      )
+      self.postMessage({
+        type: 'decrypt-key-ready'
+      })
     } else if (type === 'encrypt-chunk') {
-      const { chunkData, key, baseIV, chunkIndex } = data
+      if (!encryptionKey) {
+        throw new Error('Encryption key not initialized')
+      }
+      const { chunkData, baseIV, chunkIndex } = data
       const iv = new Uint8Array(baseIV)
       const view = new DataView(iv.buffer)
       view.setUint32(8, chunkIndex, true)
       
       const encrypted = await crypto.subtle.encrypt(
         { name: 'AES-GCM', iv },
-        key,
+        encryptionKey,
         chunkData
       )
       
@@ -32,14 +49,17 @@ self.onmessage = async function(e) {
         encrypted: new Uint8Array(encrypted)
       }, [new Uint8Array(encrypted).buffer])
     } else if (type === 'decrypt-chunk') {
-      const { encryptedChunk, key, baseIV, chunkIndex } = data
+      if (!decryptionKey) {
+        throw new Error('Decryption key not initialized')
+      }
+      const { encryptedChunk, baseIV, chunkIndex } = data
       const iv = new Uint8Array(baseIV)
       const view = new DataView(iv.buffer)
       view.setUint32(8, chunkIndex, true)
       
       const decrypted = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv },
-        key,
+        decryptionKey,
         encryptedChunk
       )
       
