@@ -1265,7 +1265,6 @@ export function usePeerConnection() {
 
       console.log('[usePeerConnection] Sending file in', totalChunks, 'chunks of', CHUNK_SIZE, 'bytes')
 
-      const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
       let inFlightCount = 0
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
