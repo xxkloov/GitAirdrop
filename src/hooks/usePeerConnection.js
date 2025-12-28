@@ -755,79 +755,84 @@ export function usePeerConnection() {
   const setupConnection = (conn) => {
     connectionsRef.current[conn.peer] = conn
     
-    const logICECandidates = () => {
-      try {
-        const peerConnection = conn.peerConnection || conn._peerConnection
-        if (peerConnection && peerConnection instanceof RTCPeerConnection) {
-          peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-              const candidate = event.candidate.candidate
-              let candidateType = 'unknown'
-              if (candidate.includes('typ host')) {
-                candidateType = 'host'
-              } else if (candidate.includes('typ srflx')) {
-                candidateType = 'srflx'
-              } else if (candidate.includes('typ relay')) {
-                candidateType = 'relay'
-                console.error('[usePeerConnection] WARNING: TURN/RELAY candidate detected! Connection will be relayed through server and will be SLOW!')
-              } else if (candidate.includes('typ prflx')) {
-                candidateType = 'prflx'
+    conn.on('open', () => {
+      console.log('[usePeerConnection] Connection established with:', conn.peer)
+      setIsConnected(true)
+      
+      setTimeout(() => {
+        try {
+          const peerConnection = conn.peerConnection || conn._peerConnection || (conn._negotiator && conn._negotiator.connection && conn._negotiator.connection.peerConnection)
+          if (peerConnection && peerConnection instanceof RTCPeerConnection) {
+            const originalOnIceCandidate = peerConnection.onicecandidate
+            peerConnection.onicecandidate = (event) => {
+              if (originalOnIceCandidate) {
+                originalOnIceCandidate.call(peerConnection, event)
               }
-              console.log(`[usePeerConnection] ICE candidate (${candidateType}):`, candidate.substring(0, 100))
-            } else {
-              console.log('[usePeerConnection] ICE gathering complete')
-              const stats = peerConnection.getStats()
-              stats.then(result => {
-                result.forEach(report => {
-                  if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-                    const localCandidate = result.get(report.localCandidateId)
-                    const remoteCandidate = result.get(report.remoteCandidateId)
-                    if (localCandidate && localCandidate.candidateType === 'relay') {
-                      console.error('[usePeerConnection] CRITICAL: Connection is using TURN/RELAY! Transfer will be slow!')
-                    } else if (localCandidate && localCandidate.candidateType === 'host') {
-                      console.log('[usePeerConnection] Direct LAN connection established (host)')
-                    } else if (localCandidate && localCandidate.candidateType === 'srflx') {
-                      console.log('[usePeerConnection] NAT traversal connection established (srflx)')
-                    }
-                  }
-                })
-              })
+              if (event.candidate) {
+                const candidate = event.candidate.candidate
+                let candidateType = 'unknown'
+                if (candidate.includes('typ host')) {
+                  candidateType = 'host'
+                } else if (candidate.includes('typ srflx')) {
+                  candidateType = 'srflx'
+                } else if (candidate.includes('typ relay')) {
+                  candidateType = 'relay'
+                  console.error('[usePeerConnection] WARNING: TURN/RELAY candidate detected! Connection will be relayed through server and will be SLOW!')
+                } else if (candidate.includes('typ prflx')) {
+                  candidateType = 'prflx'
+                }
+                console.log(`[usePeerConnection] ICE candidate (${candidateType}):`, candidate.substring(0, 100))
+              } else {
+                console.log('[usePeerConnection] ICE gathering complete')
+              }
             }
-          }
-          
-          peerConnection.oniceconnectionstatechange = () => {
-            const state = peerConnection.iceConnectionState
-            console.log('[usePeerConnection] ICE connection state:', state)
-            if (state === 'connected' || state === 'completed') {
+            
+            const checkConnectionType = () => {
               peerConnection.getStats().then(result => {
                 let usingRelay = false
+                let connectionType = 'unknown'
                 result.forEach(report => {
                   if (report.type === 'candidate-pair' && report.state === 'succeeded') {
                     const localCandidate = result.get(report.localCandidateId)
-                    if (localCandidate && localCandidate.candidateType === 'relay') {
-                      usingRelay = true
+                    if (localCandidate) {
+                      if (localCandidate.candidateType === 'relay') {
+                        usingRelay = true
+                      } else if (localCandidate.candidateType === 'host') {
+                        connectionType = 'host'
+                      } else if (localCandidate.candidateType === 'srflx') {
+                        connectionType = 'srflx'
+                      }
                     }
                   }
                 })
                 if (usingRelay) {
                   console.error('[usePeerConnection] CONNECTION ESTABLISHED BUT USING TURN/RELAY - TRANSFER WILL BE SLOW!')
-                } else {
-                  console.log('[usePeerConnection] Direct connection established - optimal for file transfer')
+                } else if (connectionType === 'host') {
+                  console.log('[usePeerConnection] Direct LAN connection established (host)')
+                } else if (connectionType === 'srflx') {
+                  console.log('[usePeerConnection] NAT traversal connection established (srflx)')
                 }
+              }).catch(err => {
+                console.warn('[usePeerConnection] Could not get connection stats:', err)
               })
             }
+            
+            const originalOnIceConnectionStateChange = peerConnection.oniceconnectionstatechange
+            peerConnection.oniceconnectionstatechange = () => {
+              if (originalOnIceConnectionStateChange) {
+                originalOnIceConnectionStateChange.call(peerConnection)
+              }
+              const state = peerConnection.iceConnectionState
+              console.log('[usePeerConnection] ICE connection state:', state)
+              if (state === 'connected' || state === 'completed') {
+                setTimeout(checkConnectionType, 1000)
+              }
+            }
           }
+        } catch (err) {
+          console.warn('[usePeerConnection] Could not access RTCPeerConnection for ICE logging:', err)
         }
-      } catch (err) {
-        console.warn('[usePeerConnection] Could not access RTCPeerConnection for ICE logging:', err)
-      }
-    }
-    
-    logICECandidates()
-    
-    conn.on('open', () => {
-      console.log('[usePeerConnection] Connection established with:', conn.peer)
-      setIsConnected(true)
+      }, 500)
     })
 
     conn.on('data', async (rawData) => {
@@ -1169,7 +1174,7 @@ export function usePeerConnection() {
 
     try {
       const conn = peerRef.current.connect(targetPeerId, {
-        reliable: false,
+        reliable: true,
         serialization: 'binary'
       })
       
@@ -1372,17 +1377,42 @@ export function usePeerConnection() {
       const keyData = await keyPromise
       const baseIV = crypto.getRandomValues(new Uint8Array(12))
 
-      const dc = conn.dataChannel || (conn._dataChannel ? conn._dataChannel : null)
-      if (!dc) {
-        throw new Error('Data channel not available. WebRTC connection may not be established.')
+      const getDataChannel = () => {
+        if (conn.dataChannel && conn.dataChannel.readyState === 'open') {
+          return conn.dataChannel
+        }
+        if (conn._dataChannel && conn._dataChannel.readyState === 'open') {
+          return conn._dataChannel
+        }
+        if (conn._negotiator && conn._negotiator.connection && conn._negotiator.connection.dataChannel) {
+          const dc = conn._negotiator.connection.dataChannel
+          if (dc.readyState === 'open') {
+            return dc
+          }
+        }
+        return null
       }
       
-      dc.binaryType = 'arraybuffer'
+      let dc = getDataChannel()
+      if (!dc) {
+        console.warn('[usePeerConnection] Data channel not immediately available, waiting...')
+        let waitAttempts = 0
+        while (!dc && waitAttempts < 50) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+          dc = getDataChannel()
+          waitAttempts++
+        }
+      }
       
-      console.log('[usePeerConnection] Using native WebRTC DataChannel for file transfer')
-      console.log('[usePeerConnection] DataChannel state:', dc.readyState)
-      console.log('[usePeerConnection] DataChannel ordered:', dc.ordered)
-      console.log('[usePeerConnection] DataChannel reliable:', dc.reliable !== false)
+      if (!dc) {
+        console.warn('[usePeerConnection] Data channel not available, using PeerJS send() method')
+      } else {
+        dc.binaryType = 'arraybuffer'
+        console.log('[usePeerConnection] Using native WebRTC DataChannel for file transfer')
+        console.log('[usePeerConnection] DataChannel state:', dc.readyState)
+        console.log('[usePeerConnection] DataChannel ordered:', dc.ordered)
+        console.log('[usePeerConnection] DataChannel reliable:', dc.reliable !== false)
+      }
 
       const formatSpeed = (bytesPerSecond) => {
         if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s'
@@ -1436,9 +1466,14 @@ export function usePeerConnection() {
       const BUFFERED_AMOUNT_LOW_THRESHOLD = 2 * 1024 * 1024
       const MAX_BUFFERED_AMOUNT = 4 * 1024 * 1024
       
-      dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
+      if (dc) {
+        dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
+      }
 
       const waitForLowBuffer = () => {
+        if (!dc) {
+          return Promise.resolve()
+        }
         if (dc.bufferedAmount <= dc.bufferedAmountLowThreshold) {
           return Promise.resolve()
         }
@@ -1469,7 +1504,7 @@ export function usePeerConnection() {
         
         const speedFormatted = formatSpeed(speed)
         
-        if (now - lastBufferedAmountLog > 1000) {
+        if (dc && now - lastBufferedAmountLog > 1000) {
           console.log(`[usePeerConnection] bufferedAmount: ${(dc.bufferedAmount / 1024).toFixed(1)} KB, speed: ${speedFormatted}`)
           lastBufferedAmountLog = now
         }
@@ -1487,8 +1522,10 @@ export function usePeerConnection() {
           throw new Error('Connection closed')
         }
 
-        while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-          await waitForLowBuffer()
+        if (dc) {
+          while (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+            await waitForLowBuffer()
+          }
         }
 
         const chunkStart = chunkIndex * CHUNK_SIZE
@@ -1508,7 +1545,11 @@ export function usePeerConnection() {
           chunk: Array.from(encryptedChunk)
         }
         const encoded = encodeMessage(message)
-        dc.send(encoded)
+        if (dc) {
+          dc.send(encoded)
+        } else {
+          conn.send(encoded)
+        }
 
         chunksSent++
         bytesSent += chunkData.byteLength
