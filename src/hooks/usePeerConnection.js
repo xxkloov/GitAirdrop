@@ -868,13 +868,14 @@ export function usePeerConnection() {
         if (messageType === 1) {
           const chunkIndex = view.getUint32(1, true)
           const encryptedChunk = new Uint8Array(arrayBuffer.slice(5))
+          console.log('[usePeerConnection] Received binary chunk, chunkIndex:', chunkIndex, 'size:', encryptedChunk.length, 'from peer:', conn.peer)
           
           const transferKey = Object.keys(transferStateRef.current).find(key => 
             key.startsWith(conn.peer + '_') && transferStateRef.current[key] === 'transferring'
           )
           
           if (!transferKey) {
-            console.error('[usePeerConnection] Received binary chunk but no active transfer for peer:', conn.peer)
+            console.error('[usePeerConnection] Received binary chunk but no active transfer for peer:', conn.peer, 'available transfers:', Object.keys(transferStateRef.current))
             return
           }
           
@@ -1074,6 +1075,7 @@ export function usePeerConnection() {
         
         fileMetadataRef.current[transferKey] = { cryptoWorker, baseIV, mimeType, totalChunks, fileName, fileSize }
         transferStateRef.current[transferKey] = 'transferring'
+        console.log('[usePeerConnection] Transfer state set to transferring, ready to receive chunks. transferKey:', transferKey, 'totalChunks:', totalChunks, 'hasDataChannel:', !!conn.dataChannel)
         setIsReceiving(true)
         setReceivingProgress({
           fileName: fileName,
