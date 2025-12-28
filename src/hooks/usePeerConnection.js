@@ -1559,6 +1559,7 @@ export function usePeerConnection() {
       setTimeout(() => {
         setIsTransferring(false)
         setTransferProgress(null)
+        restartPolling()
       }, 1000)
 
       console.log('[usePeerConnection] File sent successfully via WebSocket:', file.name)
@@ -1567,6 +1568,7 @@ export function usePeerConnection() {
       setError('Failed to send file via WebSocket. Connection was interrupted.')
       setIsTransferring(false)
       setTransferProgress(null)
+      restartPolling()
     }
   }
 
