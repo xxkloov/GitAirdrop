@@ -2061,24 +2061,26 @@ export function usePeerConnection() {
   const downloadFile = (blob, fileName) => {
     try {
       const url = URL.createObjectURL(blob)
+      if (typeof window.navigator?.msSaveOrOpenBlob === 'function') {
+        window.navigator.msSaveOrOpenBlob(blob, fileName)
+        URL.revokeObjectURL(url)
+        return
+      }
       const a = document.createElement('a')
+      const canUseDownload = typeof a.download !== 'undefined'
       a.href = url
       a.download = fileName
       a.style.display = 'none'
       document.body.appendChild(a)
-      
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      })
-      
-      a.dispatchEvent(clickEvent)
-      
+      if (canUseDownload) {
+        a.click()
+      } else {
+        window.open(url, '_blank')
+      }
       setTimeout(() => {
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
-      }, 100)
+      }, 500)
     } catch (err) {
       console.error('[usePeerConnection] Download failed, trying alternative method:', err)
       const url = URL.createObjectURL(blob)
